@@ -31,8 +31,10 @@ jobs:
       - name: Validate commit messages contain JIRA ID (case-insensitive)
         run: |
           set -euo pipefail
+
           BRANCH="${{ steps.branch.outputs.branch }}"
           BRANCH_LC="$(echo "$BRANCH" | tr '[:upper:]' '[:lower:]')"
+
           if [[ "$BRANCH_LC" =~ (feature/se-[0-9]+) ]]; then
             JIRA_ID="${BASH_REMATCH[1]}"
             echo "Expecting JIRA ID: $JIRA_ID"
@@ -41,18 +43,46 @@ jobs:
             exit 1
           fi
 
-          BEFORE="${{ github.event.before }}"
-          AFTER="${{ github.event.after || github.sha }}"
-          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
-            RANGE="${BEFORE}..${AFTER}"
+          # Determine commit range for pull_request vs push
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.base_ref }}"
+            echo "PR base branch: $BASE"
+            # fetch base so we can compare
+            git fetch origin "$BASE":"refs/remotes/origin/$BASE" || true
+            RANGE="origin/${BASE}..HEAD"
           else
-            RANGE="HEAD~50..HEAD"
+            BEFORE="${{ github.event.before || '' }}"
+            AFTER="${{ github.event.after || github.sha }}"
+            if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+              RANGE="${BEFORE}..${AFTER}"
+            else
+              RANGE="HEAD~50..HEAD"
+            fi
           fi
 
-          COMMITS=$(git log --pretty=format:"%s" "$RANGE" 2>/dev/null || git log -n 50 --pretty=format:"%s")
+          echo "Using commit range: $RANGE"
+
+          # Get commit messages excluding merge commits.
+          # --no-merges avoids merge commits; grep -v filters any remaining 'Merge ' lines defensively.
+          COMMITS=$(git log --pretty=format:"%s" --no-merges "$RANGE" 2>/dev/null || true)
+          if [ -z "$COMMITS" ]; then
+            # fallback (defensive) to last 50 non-merge messages
+            COMMITS=$(git log --pretty=format:"%s" --no-merges -n 50 || true)
+          fi
+          # final defensive filter to remove any 'Merge ' lines
+          COMMITS="$(echo "$COMMITS" | grep -vE '^Merge ' || true)"
+
+          echo "---- Commit Messages (non-merge) ----"
+          echo "$COMMITS"
+          echo "-------------------------------------"
+
           INVALID=false
           while IFS= read -r msg; do
-            if [[ -z "${msg// /}" ]]; then continue; fi
+            # skip empty lines
+            if [[ -z "${msg// /}" ]]; then
+              continue
+            fi
+
             msg_lc="$(echo "$msg" | tr '[:upper:]' '[:lower:]')"
             if [[ "$msg_lc" != *"${JIRA_ID}"* ]]; then
               echo "::error::Commit message missing JIRA ID '$JIRA_ID': $msg"
@@ -65,4 +95,4 @@ jobs:
             exit 1
           fi
 
-          echo "✅ All commits include required JIRA ID: $JIRA_ID"
+          echo "✅ All scanned (non-merge) commit messages include required JIRA ID: $JIRA_ID"
