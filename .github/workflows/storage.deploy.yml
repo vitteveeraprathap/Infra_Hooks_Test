@@ -1,0 +1,43 @@
+name: Deploy Storage (resource-group)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'dev/uat/prod'
+        required: true
+        type: choice
+        options: [ dev, uat, prod ]
+        default: dev
+      rgName:
+        description: 'Target resource group name'
+        required: true
+        default: ''
+
+jobs:
+  deploy-storage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Setup Azure CLI & Bicep
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ca-certificates curl apt-transport-https lsb-release gnupg
+          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+          az bicep install || true
+          az bicep version
+
+      - name: Select storage param file
+        run: |
+          echo PARAM_FILE=infra/parameters/str.${{ github.event.inputs.environment }}.parameters.json >> $GITHUB_ENV
+
+      - name: Deploy storage into RG
+        run: |
+          RG="${{ github.event.inputs.rgName }}"
+          if [ -z "$RG" ]; then echo "rgName required"; exit 1; fi
+          az deployment group create --resource-group "$RG" --template-file infra/storage.bicep --parameters @"$PARAM_FILE" --only-show-errors

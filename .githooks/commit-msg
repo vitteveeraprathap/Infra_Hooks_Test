@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Local commit-msg hook (Linux/macOS/Git Bash)
+COMMIT_MSG_FILE="$1"
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+
+# Enforce only for feature branches matching feature/se-####
+if [[ "$BRANCH" =~ ^feature/se-[0-9]+$ ]]; then
+  TOKEN="$BRANCH"
+  MSG=$(cat "$COMMIT_MSG_FILE" | tr -d '\r')
+  if ! echo "$MSG" | grep -qi "$TOKEN"; then
+    echo "ERROR: Commit message must include the branch JIRA token: $TOKEN"
+    echo "Example: '${TOKEN}: short description'"
+    exit 1
+  fi
+fi
+exit 0

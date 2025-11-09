@@ -1,0 +1,68 @@
+name: Validate Commit Message (JIRA ID check)
+
+on:
+  push:
+    branches:
+      - 'feature/se-*'
+  pull_request:
+    branches:
+      - develop
+      - master
+      - main
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  validate-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine branch name
+        id: branch
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "branch=${{ github.head_ref }}" >>"$GITHUB_OUTPUT"
+          else
+            echo "branch=${GITHUB_REF#refs/heads/}" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate commit messages contain JIRA ID (case-insensitive)
+        run: |
+          set -euo pipefail
+          BRANCH="${{ steps.branch.outputs.branch }}"
+          BRANCH_LC="$(echo "$BRANCH" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$BRANCH_LC" =~ (feature/se-[0-9]+) ]]; then
+            JIRA_ID="${BASH_REMATCH[1]}"
+            echo "Expecting JIRA ID: $JIRA_ID"
+          else
+            echo "::error::Branch name doesn't match 'feature/se-####': $BRANCH"
+            exit 1
+          fi
+
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.event.after || github.sha }}"
+          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            RANGE="${BEFORE}..${AFTER}"
+          else
+            RANGE="HEAD~50..HEAD"
+          fi
+
+          COMMITS=$(git log --pretty=format:"%s" "$RANGE" 2>/dev/null || git log -n 50 --pretty=format:"%s")
+          INVALID=false
+          while IFS= read -r msg; do
+            if [[ -z "${msg// /}" ]]; then continue; fi
+            msg_lc="$(echo "$msg" | tr '[:upper:]' '[:lower:]')"
+            if [[ "$msg_lc" != *"${JIRA_ID}"* ]]; then
+              echo "::error::Commit message missing JIRA ID '$JIRA_ID': $msg"
+              INVALID=true
+            fi
+          done <<< "$COMMITS"
+
+          if [ "$INVALID" = true ]; then
+            echo "::error::One or more commits missing JIRA ID ($JIRA_ID)."
+            exit 1
+          fi
+
+          echo "✅ All commits include required JIRA ID: $JIRA_ID"

@@ -1,0 +1,55 @@
+name: Deploy Resource Group (subscription-level)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'dev/uat/prod'
+        required: true
+        type: choice
+        options: [ dev, uat, prod ]
+        default: dev
+      location:
+        description: 'optional override location'
+        required: false
+        default: ''
+
+jobs:
+  deploy-rg:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Setup Azure CLI & Bicep
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ca-certificates curl apt-transport-https lsb-release gnupg
+          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+          az bicep install || true
+          az bicep version
+
+      - name: Select param file
+        run: |
+          echo PARAM_FILE=infra/parameters/rg.${{ github.event.inputs.environment }}.parameters.json >> $GITHUB_ENV
+
+      - name: Determine location
+        run: |
+          if [ -z "${{ github.event.inputs.location }}" ]; then
+            LOCATION=$(jq -r '.parameters.location.value' "$PARAM_FILE")
+          else
+            LOCATION="${{ github.event.inputs.location }}"
+          fi
+          echo LOCATION=$LOCATION >> $GITHUB_ENV
+
+      - name: Subscription what-if (preview)
+        run: |
+          az deployment sub what-if --location "$LOCATION" --template-file infra/resourceGroup.bicep --parameters @"$PARAM_FILE"
+
+      - name: Deploy resource group (subscription-level)
+        run: |
+          DEPLOY_NAME="rg-deploy-${{ github.event.inputs.environment }}-${{ github.run_id }}"
+          az deployment sub create --name "$DEPLOY_NAME" --location "$LOCATION" --template-file infra/resourceGroup.bicep --parameters @"$PARAM_FILE" --only-show-errors
