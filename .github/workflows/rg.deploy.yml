@@ -1,4 +1,4 @@
-name: Deploy Resource Group (subscription-level)
+name: Deploy Resource Group (subscription-level scoped)
 
 on:
   workflow_dispatch:
